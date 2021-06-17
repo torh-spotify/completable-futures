@@ -26,6 +26,7 @@ import static java.util.stream.Collectors.toMap;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,8 +40,11 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * A collection of static utility methods that extend the
@@ -751,6 +755,141 @@ public final class CompletableFutures {
         () -> pollTask(pollingTask, result), 0, frequency.toMillis(), TimeUnit.MILLISECONDS);
     result.whenComplete((r, ex) -> scheduled.cancel(true));
     return result;
+  }
+
+  /**
+   * Constructs a collector which takes a stream of {@code CompletionStage<List<T>>} and returns
+   * flattened result of type {@code CompletionStage<List<T>>}.
+   *
+   * <p>The list of results is in the same order as the Stream elements.
+   *
+   * <p> As soon as any of the stages complete exceptionally, then the returned future also does so,
+   * with a {@link CompletionException} holding this exception as its cause.
+   *
+   * <p> If the stream is empty, a future holding an empty list is returned.
+   *
+   * <p>This collector uses {@link CompletableFutures#allAsList(List)} under the hood.
+   *
+   * @param <T> the type contained within the lists within the completion stages within the stream
+   * @return a CompletionStage containing the results of the completion stages
+   */
+  public static <T>
+      Collector<CompletionStage<List<T>>, List<CompletionStage<List<T>>>, CompletionStage<List<T>>>
+      flattenCollector() {
+    return Collector.of(
+        ArrayList::new,
+        List::add,
+        CompletableFutures::combineLists,
+        (list) ->
+            allAsList(list).thenApply(lists ->
+                lists.stream().flatMap(Collection::stream).collect(Collectors.toList())));
+  }
+
+  /**
+   * Constructs a collector which takes a stream of {@code CompletionStage<T>} and returns a {@code
+   * CompletionStage<List<T>>}.
+   *
+   * <p>The list of results is in the same order as the Stream elements.
+   *
+   * <p> As soon as any of the stages complete exceptionally, then the returned future also does so,
+   * with a {@link CompletionException} holding this exception as its cause.
+   *
+   * <p> If the stream is empty, a future holding an empty list is returned.
+   *
+   * <p>This collector uses {@link CompletableFutures#allAsList(List)} under the hood.
+   *
+   * @param <T> the type contained within the completion stages within the stream
+   * @return a CompletionStage containing the results of the completion stages
+   */
+  public static <T> Collector<CompletionStage<T>, List<CompletionStage<T>>, CompletionStage<List<T>>>
+      collector() {
+    return Collector.of(
+        ArrayList::new,
+        List::add,
+        CompletableFutures::combineLists,
+        CompletableFutures::allAsList);
+  }
+
+  /**
+   * Returns a collector which takes a {@code Stream<T>} and returns a {@code
+   * CompletionStage<Boolean>} containing {@code true} if all elements of the stream matches {@code
+   * predicate}, otherwise {@code false}.
+   *
+   * <p> As soon as any of the stages complete exceptionally, then the returned future also does so,
+   * with a {@link CompletionException} holding this exception as its cause.
+   *
+   * <p> If the stream is empty then {@code true} is returned.
+   *
+   * <p>This collector uses {@link CompletableFutures#allAsList(List)} under the hood.
+   *
+   * @param predicate the predicate
+   * @param <T>       the type contained within the completion stages within the stream
+   * @return a CompletionStage containing a boolean result
+   */
+  public static <T>
+      Collector<CompletionStage<T>, List<CompletionStage<T>>, CompletionStage<Boolean>> allMatch(
+      Predicate<T> predicate) {
+    return matcher(Stream::allMatch, predicate);
+  }
+
+  /**
+   * Returns a collector which takes a {@code Stream<T>} and returns a {@code
+   * CompletionStage<Boolean>} containing {@code true} if any element of the stream matches {@code
+   * predicate}, otherwise {@code false}.
+   *
+   * <p> As soon as any of the stages complete exceptionally, then the returned future also does so,
+   * with a {@link CompletionException} holding this exception as its cause.
+   *
+   * <p> If the stream is empty then {@code false} is returned.
+   *
+   * <p>This collector uses {@link CompletableFutures#allAsList(List)} under the hood.
+   *
+   * @param predicate the predicate
+   * @param <T>       the type contained within the completion stages within the stream
+   * @return a CompletionStage containing a boolean result
+   */
+  public static <T>
+      Collector<CompletionStage<T>, List<CompletionStage<T>>, CompletionStage<Boolean>> anyMatch(
+      Predicate<T> predicate) {
+    return matcher(Stream::anyMatch, predicate);
+  }
+
+  /**
+   * Returns a collector which takes a {@code Stream<T>} and returns a {@code
+   * CompletionStage<Boolean>} containing {@code true} if no element of the stream matches {@code
+   * predicate}, otherwise {@code false}.
+   *
+   * <p> As soon as any of the stages complete exceptionally, then the returned future also does so,
+   * with a {@link CompletionException} holding this exception as its cause.
+   *
+   * <p> If the stream is empty then {@code true} is returned.
+   *
+   * <p>This collector uses {@link CompletableFutures#allAsList(List)} under the hood.
+   *
+   * @param predicate the predicate
+   * @param <T>       the type contained within the completion stages within the stream
+   * @return a CompletionStage containing a boolean result
+   */
+  public static <T>
+      Collector<CompletionStage<T>, List<CompletionStage<T>>, CompletionStage<Boolean>> noneMatch(
+      Predicate<T> predicate) {
+    return matcher(Stream::noneMatch, predicate);
+  }
+
+  private static <T>
+      Collector<CompletionStage<T>, List<CompletionStage<T>>, CompletionStage<Boolean>>
+      matcher(BiFunction<Stream<T>, Predicate<T>, Boolean> matcher, Predicate<T> predicate) {
+    return Collector.of(
+        ArrayList::new,
+        List::add,
+        CompletableFutures::combineLists,
+        (list) ->
+            CompletableFutures.allAsList(list)
+                .thenApply(results -> matcher.apply(results.stream(), predicate)));
+  }
+
+  private static <T> List<T> combineLists(List<T> a, List<T> b) {
+    return Stream.concat(a.stream(), b.stream()).collect(Collectors.toList());
   }
 
   private static <T> void pollTask(
